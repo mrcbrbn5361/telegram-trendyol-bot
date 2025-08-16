@@ -9,7 +9,7 @@ from telegram import Update, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from scraper import scrape_product_info, is_valid_trendyol_url
 from data_manager import add_product, remove_product, get_all_products, update_product_price
-from config import TELEGRAM_BOT_TOKEN, CHECK_INTERVAL, ALLOWED_GROUP_IDS, ADMIN_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, CHECK_INTERVAL, ADMIN_CHAT_ID
 
 # Configure logging
 logging.basicConfig(
@@ -21,18 +21,9 @@ logger = logging.getLogger(__name__)
 # Global variable to store bot instance
 _bot_instance = None
 
-def is_allowed_chat(chat_id):
-    """Check if the chat_id is in the allowed list."""
-    return chat_id in ALLOWED_GROUP_IDS
-
 def start(update: Update, context: CallbackContext):
     """Send a message when the command /start is issued."""
     chat_id = update.effective_chat.id
-    
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized start command from chat_id: {chat_id}")
-        return
         
     update.message.reply_text(
         'Merhaba! Trendyol Fiyat Takip Botuna hoş geldiniz.\n\n'
@@ -53,11 +44,6 @@ def extract_url(text):
 def add_product_handler(update: Update, context: CallbackContext):
     """Add a product to track."""
     chat_id = update.effective_chat.id
-    
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized add_product command from chat_id: {chat_id}")
-        return
     
     # Extract URL from command or message text
     if context.args:
@@ -116,11 +102,6 @@ def url_handler(update: Update, context: CallbackContext):
     """Handle messages containing Trendyol URLs."""
     chat_id = update.effective_chat.id
     
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized URL message from chat_id: {chat_id}")
-        return
-    
     # Extract URL from message text
     url = extract_url(update.message.text)
     
@@ -172,11 +153,6 @@ def remove_product_handler(update: Update, context: CallbackContext):
     """Remove a product from tracking."""
     chat_id = update.effective_chat.id
     
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized remove_product command from chat_id: {chat_id}")
-        return
-    
     # Extract URL from command
     if context.args:
         url = extract_url(' '.join(context.args))
@@ -200,11 +176,6 @@ def remove_product_handler(update: Update, context: CallbackContext):
 def list_products(update: Update, context: CallbackContext):
     """List all tracked products."""
     chat_id = update.effective_chat.id
-    
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized list_products command from chat_id: {chat_id}")
-        return
     
     # Get all products for this chat
     products = get_all_products(chat_id)
@@ -499,6 +470,40 @@ def get_error_solution(error_category):
     }
     return solutions.get(error_category, "• Logları kontrol edin\n• Gerekirse yeniden başlatın")
 
+def send_startup_message(bot):
+    """Send a startup message to all known chats."""
+    time.sleep(5)  # Wait a bit for the bot to initialize
+
+    logger.info("Sending startup message to all known users...")
+    all_chats = get_all_products()
+    chat_ids = all_chats.keys()
+
+    if not chat_ids:
+        logger.info("No known users to send startup message to.")
+        return
+
+    startup_message = (
+        'Merhaba! Bot yeniden başlatıldı ve şimdi aktif.\n\n'
+        'Mevcut komutlar:\n'
+        '/ekle [Trendyol linki] - Ürün ekler\n'
+        '/sil [Trendyol linki] - Ürün siler\n'
+        '/listele - Ürünleri listeler\n'
+        '/yenile - Fiyatları anında kontrol eder\n'
+        '/start - Bu yardım mesajını gösterir'
+    )
+
+    for chat_id in chat_ids:
+        try:
+            bot.send_message(
+                chat_id=int(chat_id),
+                text=startup_message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+            logger.info(f"Startup message sent to chat_id: {chat_id}")
+        except Exception as e:
+            logger.warning(f"Could not send startup message to {chat_id}. Maybe bot was blocked? Error: {e}")
+
 def main():
     """Start the bot."""
     global _bot_instance
@@ -507,10 +512,6 @@ def main():
         logger.error("No token provided. Set TELEGRAM_BOT_TOKEN in .env file.")
         return
         
-    if not ALLOWED_GROUP_IDS:
-        logger.warning("ALLOWED_GROUP_IDS is not set in .env file. Bot will not respond to any group.")
-        logger.warning("Set ALLOWED_GROUP_IDS with comma-separated group IDs in your .env file.")
-    
     # Create the Updater and pass it the bot's token
     updater = Updater(TELEGRAM_BOT_TOKEN)
     
@@ -550,6 +551,11 @@ def main():
     # Start the Bot
     updater.start_polling()
     logger.info("Bot started!")
+
+    # Send startup message in a separate thread to not block the main thread
+    startup_thread = threading.Thread(target=send_startup_message, args=(_bot_instance,))
+    startup_thread.daemon = True
+    startup_thread.start()
     
     # Run the bot until the user presses Ctrl-C or the process receives SIGINT, SIGTERM or SIGABRT
     updater.idle()
@@ -557,11 +563,6 @@ def main():
 def refresh_prices_handler(update: Update, context: CallbackContext):
     """Manual refresh command to check all tracked products immediately."""
     chat_id = update.effective_chat.id
-    
-    # Check if the chat is allowed
-    if not is_allowed_chat(chat_id):
-        logger.info(f"Unauthorized refresh command from chat_id: {chat_id}")
-        return
     
     # Get products for this specific chat
     products = get_all_products(chat_id)
